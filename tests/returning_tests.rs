@@ -3,7 +3,7 @@
 pub mod common;
 
 pub use common::{bakery_chain::*, setup::*, TestContext};
-use sea_orm::{entity::prelude::*, IntoActiveModel, Set};
+use sea_orm::{entity::prelude::*, IntoActiveModel, NotSet, Set};
 pub use sea_query::{Expr, Query};
 use serde_json::json;
 
@@ -65,6 +65,65 @@ async fn main() -> Result<(), DbErr> {
     ctx.delete().await;
 
     Ok(())
+}
+
+#[sea_orm_macros::test]
+#[cfg_attr(
+    any(
+        feature = "sqlx-mysql",
+        all(
+            feature = "sqlx-sqlite",
+            not(feature = "sqlite-use-returning-for-3_35")
+        )
+    ),
+    should_panic(expected = "Database backend doesn't support RETURNING")
+)]
+async fn insert_many() {
+    pub use common::{features::*, TestContext};
+    use edit_log::*;
+
+    let run = || async {
+        let ctx = TestContext::new("returning_tests_insert_many").await;
+        let db = &ctx.db;
+        
+        create_tables(db).await?;
+        
+        // Insert many with returning
+        assert_eq!(
+            Entity::insert_many(
+                vec![
+                    ActiveModel {
+                        id: NotSet,
+                        action: "before_save".into(),
+                        values: json!({ "id": "unique-id-001" }).into(),
+                    },
+                    ActiveModel {
+                        id: NotSet,
+                        action: "before_save".into(),
+                        values: json!({ "id": "unique-id-002" }).into(),
+                    },
+                ]
+            )
+              .exec_with_returning_many(db)
+              .await?,
+            [
+                Model {
+                    id: 1,
+                    action: "before_save".into(),
+                    values: json!({ "id": "unique-id-001" }),
+                },
+                Model {
+                    id: 2,
+                    action: "before_save".into(),
+                    values: json!({ "id": "unique-id-002" }),
+                },
+            ]
+        );
+        
+        Result::<(), DbErr>::Ok(())
+    };
+    
+    run().await.unwrap()
 }
 
 #[sea_orm_macros::test]

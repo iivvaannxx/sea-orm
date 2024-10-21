@@ -102,6 +102,26 @@ where
             Err(err) => Err(err),
         }
     }
+    
+    pub async fn exec_with_returning_many<'a, C>(
+        self,
+        db: &'a C,
+    ) -> Result<TryInsertResult<Vec<<A::Entity as EntityTrait>::Model>>, DbErr>
+    where
+        <A::Entity as EntityTrait>::Model: IntoActiveModel<A>,
+        C: ConnectionTrait,
+        A: 'a,
+    {
+        if self.insert_struct.columns.is_empty() {
+            return Ok(TryInsertResult::Empty);
+        }
+        let res = self.insert_struct.exec_with_returning_many(db).await;
+        match res {
+            Ok(res) => Ok(TryInsertResult::Inserted(res)),
+            Err(DbErr::RecordNotInserted) => Ok(TryInsertResult::Conflicted),
+            Err(err) => Err(err),
+        }
+    }
 }
 
 impl<A> Insert<A>
@@ -155,6 +175,18 @@ where
     {
         Inserter::<A>::new(self.primary_key, self.query).exec_with_returning(db)
     }
+    
+    pub fn exec_with_returning_many<'a, C>(
+        self,
+        db: &'a C,
+    ) -> impl Future<Output = Result<Vec<<A::Entity as EntityTrait>::Model>, DbErr>> + '_
+    where
+        <A::Entity as EntityTrait>::Model: IntoActiveModel<A>,
+        C: ConnectionTrait,
+        A: 'a,
+    {
+        Inserter::<A>::new(self.primary_key, self.query).exec_with_returning_many(db)
+    }
 }
 
 impl<A> Inserter<A>
@@ -202,6 +234,19 @@ where
         A: 'a,
     {
         exec_insert_with_returning::<A, _>(self.primary_key, self.query, db)
+    }
+    
+    
+    pub fn exec_with_returning_many<'a, C>(
+        self,
+        db: &'a C,
+    ) -> impl Future<Output = Result<Vec<<A::Entity as EntityTrait>::Model>, DbErr>> + '_
+    where
+        <A::Entity as EntityTrait>::Model: IntoActiveModel<A>,
+        C: ConnectionTrait,
+        A: 'a,
+    {
+        exec_insert_with_returning_many::<A, _>(self.primary_key, self.query, db)
     }
 }
 
@@ -312,4 +357,35 @@ where
             "Failed to find inserted item".to_owned(),
         )),
     }
+}
+
+async fn exec_insert_with_returning_many<A, C>(
+    primary_key: Option<ValueTuple>,
+    mut insert_statement: InsertStatement,
+    db: &C,
+) -> Result<Vec<<A::Entity as EntityTrait>::Model>, DbErr>
+where
+  <A::Entity as EntityTrait>::Model: IntoActiveModel<A>,
+  C: ConnectionTrait,
+  A: ActiveModelTrait,
+{
+    let db_backend = db.get_database_backend();
+    let found = match db.support_returning() {
+        true => {
+            let returning = Query::returning().exprs(
+                <A::Entity as EntityTrait>::Column::iter()
+                  .map(|c| c.select_as(c.into_returning_expr(db_backend))),
+            );
+            insert_statement.returning(returning);
+            let insert_statement = db_backend.build(&insert_statement);
+            SelectorRaw::<SelectModel<<A::Entity as EntityTrait>::Model>>::from_statement(
+                insert_statement,
+            )
+              .all(db)
+              .await?
+        }
+        false => unimplemented!("Database backend doesn't support RETURNING"),
+    };
+    
+    Ok(found)
 }
