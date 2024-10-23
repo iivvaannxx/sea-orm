@@ -281,6 +281,16 @@ pub trait QuerySelect: Sized {
         self.query().add_group_by([col.into_simple_expr()]);
         self
     }
+    
+    /// Adds multiple group by columns
+    fn group_by_many<C, I>(mut self, cols: I) -> Self
+    where
+        C: IntoSimpleExpr,
+        I: IntoIterator<Item = C>,
+    {
+        self.query().add_group_by(cols.into_iter().map(|c| c.into_simple_expr()).collect());
+        self
+    }
 
     /// Add an AND HAVING expression
     /// ```
