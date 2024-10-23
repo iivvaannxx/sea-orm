@@ -288,7 +288,7 @@ pub trait QuerySelect: Sized {
         C: IntoSimpleExpr,
         I: IntoIterator<Item = C>,
     {
-        self.query().add_group_by(cols.into_iter().map(|c| c.into_simple_expr()).collect());
+        self.query().add_group_by(cols.into_iter().map(|c| c.into_simple_expr()).collect::<Vec<_>>());
         self
     }
 
